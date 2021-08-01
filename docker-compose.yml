@@ -1,0 +1,97 @@
+version: '3'
+services: 
+    # https://ci.apache.org/projects/flink/flink-docs-master/docs/deployment/resource-providers/standalone/docker/
+    jobmanager:
+        image: flink:1.13.0-scala_2.12-java11
+        ports: 
+            - 8081:8081
+        environment: 
+            FLINK_PROPERTIES: "jobmanager.rpc.address: jobmanager"
+        command: jobmanager
+
+    taskmanager:
+        image: flink:1.13.0-scala_2.12-java11
+        environment: 
+            FLINK_PROPERTIES: "jobmanager.rpc.address: jobmanager"
+        command: taskmanager
+
+    kafka:
+        image: confluentinc/cp-kafka:5.4.4
+        environment:
+            KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+            KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+            KAFKA_BROKER_ID: 2
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+        healthcheck:
+            test: ["CMD", "bash", "-c", "nc -zv localhost 19092"]
+            interval: 10s
+        depends_on:
+        -   zookeeper
+#        volumes:
+#        -   ./data/kafka:/var/lib/kafka/data
+        ports:
+        -   9092:9092
+
+    zookeeper:
+        image: confluentinc/cp-zookeeper:5.4.4
+        environment:
+            ZOOKEEPER_CLIENT_PORT: 2181
+        ports:
+        -   2181:2181
+
+    schema-registry:
+        image: confluentinc/cp-schema-registry:5.5.4
+        environment:
+            SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:19092
+            SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8081"
+            SCHEMA_REGISTRY_HOST_NAME: schema-registry
+            SCHEMA_REGISTRY_DEBUG: "true"
+        depends_on:
+            -   zookeeper
+        ports:
+            -   18081:8081
+#    https://docs.confluent.io/platform/current/installation/configuration/connect/index.html
+    kafka-connect:
+        image: confluentinc/cp-kafka-connect-base:5.5.4
+        depends_on:
+            -   zookeeper
+            -   schema-registry
+            -   kafka
+        ports:
+        -   8083:8083
+        environment:
+#            https://github.com/confluentinc/kafka-images/blob/703e800d87acaf060b6eadd8c8bcf06470898579/kafka-connect-base/include/etc/confluent/docker/kafka-connect.properties.template
+            CONNECT_BOOTSTRAP_SERVERS: kafka:19092
+            CONNECT_GROUP_ID: kafka-connect-01
+            CONNECT_CONFIG_STORAGE_TOPIC: _kafka-connect-config
+            CONNECT_OFFSET_STORAGE_TOPIC: _kafka-connect-offset
+            CONNECT_STATUS_STORAGE_TOPIC: _kafka-connect-status
+            CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+            CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+            CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+            CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+            CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+            CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1  # default is 3
+            CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1  # default is 3
+            CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1  # default is 3
+            CONNECT_PLUGIN_PATH: /usr/share/java/,/usr/share/confluent-hub-components/,/usr/local/share/kafka/plugins
+
+        volumes:
+        -   ./data/kafka-connect:/data
+        -   ./kafka-connect/plugins:/usr/local/share/kafka/plugins
+    database:
+        image: postgres:13
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_DB: database
+        command: ["postgres", "-c", "log_statement=all"]
+        volumes:
+            - ./data/database:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD", "pg_isready", "-U", "postgres"]
+            interval: 5s
+            retries: 5
+        ports:
+        -   5432:5432
